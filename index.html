@@ -12,19 +12,20 @@
             background-color: #050505;
             color: #fff;
             font-family: 'Inter', sans-serif;
-            touch-action: none; /* Prevents pull-to-refresh */
+            touch-action: none;
         }
         canvas {
             display: block;
-            filter: blur(4px) contrast(1.8); /* Slightly reduced blur for mobile performance */
+            filter: blur(4px) contrast(1.8);
         }
-        .controls-overlay {
+        .ui-layer {
             position: absolute;
-            top: 20px;
-            left: 20px;
+            inset: 0;
             pointer-events: none;
             z-index: 10;
+            padding: 20px;
         }
+        .interactive { pointer-events: auto; }
         .glass {
             background: rgba(255, 255, 255, 0.05);
             backdrop-filter: blur(10px);
@@ -39,7 +40,6 @@
             justify-content: center;
             z-index: 50;
             background: radial-gradient(circle at center, #111 0%, #050505 100%);
-            padding: 20px;
         }
         .hidden-node { display: none !important; }
     </style>
@@ -47,63 +47,74 @@
 <body>
 
     <div id="setup-screen">
-        <h1 class="text-3xl font-thin tracking-[0.2em] mb-12 text-cyan-400 text-center">FLUID VOX MOBILE</h1>
-        <div class="flex flex-col gap-4 w-full max-w-xs">
-            <button id="btn-mic" class="glass p-6 rounded-2xl flex flex-col items-center gap-3 active:scale-95 transition-transform">
-                <div class="p-3 rounded-full bg-cyan-500/10 text-cyan-400">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-                </div>
-                <h2 class="font-medium text-white">Start Visualizer</h2>
-            </button>
-        </div>
+        <h1 class="text-3xl font-thin tracking-[0.2em] mb-12 text-cyan-400">FLUID VOX</h1>
+        <button id="btn-mic" class="glass p-8 rounded-3xl flex flex-col items-center gap-4 active:scale-95 transition-transform">
+            <div class="p-4 rounded-full bg-cyan-500/10 text-cyan-400">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            </div>
+            <span class="font-bold tracking-widest text-sm">INITIALIZE MIC</span>
+        </button>
     </div>
 
-    <div id="visualizer-ui" class="hidden-node">
-        <div class="controls-overlay">
-            <div class="text-[10px] uppercase tracking-widest opacity-50 mb-1">Status: <span class="text-green-400">Active</span></div>
-            <div class="text-xs space-y-1">
-                <p>Sens: <span id="sensitivity-val">1.0</span>x</p>
-                <p>Speed: <span id="speed-val">20.0</span></p>
+    <div id="visualizer-ui" class="ui-layer hidden-node">
+        <div class="flex justify-between items-start">
+            <div class="text-[10px] space-y-1 opacity-70 uppercase tracking-tighter">
+                <p>Sens: <span id="sensitivity-val" class="text-cyan-400">1.5</span>x</p>
+                <p>Speed: <span id="speed-val" class="text-fuchsia-400">12.0</span></p>
+                <p class="text-[8px] mt-2 opacity-40">Top: Sens | Bottom: Speed</p>
             </div>
+            <button id="btn-stop" class="interactive glass p-3 rounded-full hover:bg-white/10 active:scale-90 transition-all">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="red" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
         </div>
-        <canvas id="visualizer"></canvas>
+        <canvas id="visualizer" class="absolute inset-0 -z-10"></canvas>
     </div>
 
     <script>
         const canvas = document.getElementById('visualizer');
         const ctx = canvas.getContext('2d');
-        const sensitivityDisplay = document.getElementById('sensitivity-val');
-        const speedDisplay = document.getElementById('speed-val');
         const setupScreen = document.getElementById('setup-screen');
         const vizUI = document.getElementById('visualizer-ui');
-
+        
         let audioContext, analyser, sourceNode, dataArray, animationId;
-        let sensitivity = 1.5; // Slightly higher for mobile mics
-        let speed = 12.0;
-        const DENSITY = 3; 
+        let sensitivity = 1.5;
+        let flowSpeed = 12.0; 
+        const DENSITY = 4; // Higher density = better performance on mobile
 
         let history = [];
         let particles = [];
         let wavePhase = 0;
 
-        // Mobile Specific Logic: Flowing from bottom to top
+        const SETTINGS = {
+            growEndFactor: 0.12, // The "fade in" area from the bottom
+            curveExponent: 2.2,
+            shrinkIntensity: 0.9
+        };
+
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            const capacity = Math.ceil(canvas.height / DENSITY);
-            while(history.length < capacity) history.push({l: 0, f: 0});
         }
         window.addEventListener('resize', resize);
 
-        // Interaction for mobile (Tap left/right to adjust)
+        // --- QUADRANT TOUCH CONTROLS ---
         window.addEventListener('touchstart', (e) => {
+            if (vizUI.classList.contains('hidden-node')) return;
             const x = e.touches[0].clientX;
-            if (x < window.innerWidth / 2) {
-                sensitivity = Math.max(0.5, sensitivity - 0.2);
+            const y = e.touches[0].clientY;
+            const midX = window.innerWidth / 2;
+            const midY = window.innerHeight / 2;
+
+            if (y < midY) {
+                // TOP HALF: Sensitivity
+                sensitivity = (x < midX) ? Math.max(0.2, sensitivity - 0.3) : Math.min(5.0, sensitivity + 0.3);
             } else {
-                sensitivity = Math.min(5.0, sensitivity + 0.2);
+                // BOTTOM HALF: Speed
+                flowSpeed = (x < midX) ? Math.max(4, flowSpeed - 2) : Math.min(40, flowSpeed + 2);
             }
-            sensitivityDisplay.innerText = sensitivity.toFixed(1);
+            
+            document.getElementById('sensitivity-val').innerText = sensitivity.toFixed(1);
+            document.getElementById('speed-val').innerText = flowSpeed.toFixed(1);
         });
 
         async function initAudio() {
@@ -111,21 +122,29 @@
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 sourceNode = audioContext.createMediaStreamSource(stream);
-                
-                setupScreen.classList.add('hidden-node');
-                vizUI.classList.remove('hidden-node');
-                resize();
-
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
                 dataArray = new Uint8Array(analyser.frequencyBinCount);
                 sourceNode.connect(analyser);
 
+                setupScreen.classList.add('hidden-node');
+                vizUI.classList.remove('hidden-node');
+                resize();
                 render();
-            } catch (err) { alert("Mic access required."); }
+            } catch (err) { alert("Mic Access Denied"); }
+        }
+
+        function stopAudio() {
+            cancelAnimationFrame(animationId);
+            if (audioContext) audioContext.close();
+            vizUI.classList.add('hidden-node');
+            setupScreen.classList.remove('hidden-node');
+            history = [];
+            particles = [];
         }
 
         document.getElementById('btn-mic').addEventListener('click', initAudio);
+        document.getElementById('btn-stop').addEventListener('click', stopAudio);
 
         function getColor(weight) {
             const r = Math.floor(79 + (217 - 79) * weight);
@@ -137,75 +156,86 @@
             animationId = requestAnimationFrame(render);
             analyser.getByteFrequencyData(dataArray);
             
-            // Calculate loudness
             let sum = 0;
             for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
-            let currentLoudness = (sum / dataArray.length / 255) * sensitivity;
+            let rawLoudness = (sum / dataArray.length / 255) * sensitivity;
             
-            // Update History (New data enters at index 0, which we will map to BOTTOM)
-            history.unshift({l: currentLoudness, f: currentLoudness});
+            // Speed logic: Add items based on flowSpeed
+            const iterations = Math.max(1, Math.floor(flowSpeed / 5));
+            for(let i=0; i<iterations; i++) {
+                history.unshift({l: rawLoudness, f: rawLoudness});
+            }
             if(history.length > canvas.height / DENSITY) history.pop();
 
             ctx.fillStyle = '#050505';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             const centerX = canvas.width / 2;
-            wavePhase += 0.1;
+            const growPixelLimit = canvas.height * SETTINGS.growEndFactor;
+            wavePhase += 0.15;
 
-            // Render Vertical Bars (From bottom up)
+            // 1. Draw Liquid Bars (Bottom to Top)
             history.forEach((item, i) => {
-                const y = canvas.height - (i * DENSITY); // Start at bottom
-                if (y < -50) return;
+                const yFromBottom = i * DENSITY;
+                const yPos = canvas.height - yFromBottom;
+                if (yPos < -50) return;
 
-                // Fading out as it goes up
-                const fade = Math.pow(1 - (i / history.length), 2);
-                const barWidth = canvas.width * 0.8 * item.l * fade;
+                let shrinkFactor = 1.0;
+                // Grow Effect at the source (Bottom)
+                if (yFromBottom < growPixelLimit) {
+                    shrinkFactor = 1.0 - ((1.0 - Math.pow(yFromBottom / growPixelLimit, SETTINGS.curveExponent)) * SETTINGS.shrinkIntensity);
+                }
+
+                // Overall fade out as it reaches the top
+                const lifeFade = Math.pow(1 - (i / (canvas.height/DENSITY)), 2);
+                const barWidth = (canvas.width * 0.8) * item.l * shrinkFactor * lifeFade;
                 
+                ctx.globalAlpha = lifeFade;
                 ctx.fillStyle = getColor(item.f);
-                ctx.globalAlpha = fade;
-                ctx.fillRect(centerX - barWidth/2, y, barWidth, DENSITY + 1);
+                ctx.fillRect(centerX - barWidth/2, yPos, barWidth, DENSITY + 1);
             });
 
-            // Render Yellow Wave (Foreground)
+            // 2. Draw Yellow Wave
             ctx.globalAlpha = 1;
             ctx.strokeStyle = '#fdff00';
+            ctx.lineWidth = 3;
             ctx.beginPath();
             for(let i=0; i < history.length; i+=2) {
-                const y = canvas.height - (i * DENSITY);
-                const fade = Math.pow(1 - (i / history.length), 1.5);
-                const waveX = centerX + Math.sin(y * 0.02 - wavePhase) * (history[i].l * 100 * fade);
+                const yFromBottom = i * DENSITY;
+                const yPos = canvas.height - yFromBottom;
                 
-                if(i === 0) ctx.moveTo(waveX, y);
-                else ctx.lineTo(waveX, y);
+                let mod = 1.0;
+                if (yFromBottom < growPixelLimit) {
+                    mod = Math.pow(yFromBottom / growPixelLimit, SETTINGS.curveExponent);
+                }
+                const fade = Math.pow(1 - (i / (canvas.height/DENSITY)), 1.5);
+                
+                const waveX = centerX + Math.sin(yPos * 0.03 - wavePhase) * (history[i].l * 120 * mod * fade);
+                if(i === 0) ctx.moveTo(waveX, yPos);
+                else ctx.lineTo(waveX, yPos);
             }
-            ctx.lineWidth = 3;
             ctx.stroke();
 
-            // Particles
-            if (currentLoudness > 0.2 && particles.length < 50) {
+            // 3. Particles
+            if (rawLoudness > 0.25 && particles.length < 40) {
                 particles.push({
-                    x: centerX,
-                    y: canvas.height - 20,
-                    vx: (Math.random() - 0.5) * 10,
-                    vy: -Math.random() * 5 - 2,
+                    x: centerX + (Math.random() - 0.5) * 50,
+                    y: canvas.height - 10,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: -Math.random() * 8 - 2,
                     life: 1.0
                 });
             }
 
             particles.forEach((p, index) => {
-                p.x += p.vx;
-                p.y += p.vy;
-                p.life -= 0.02;
+                p.x += p.vx; p.y += p.vy; p.life -= 0.02;
                 if(p.life <= 0) particles.splice(index, 1);
-                
                 ctx.fillStyle = '#fdff00';
                 ctx.globalAlpha = p.life;
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
                 ctx.fill();
             });
-            
-            speedDisplay.innerText = speed.toFixed(1);
         }
     </script>
 </body>
