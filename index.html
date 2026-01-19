@@ -80,13 +80,13 @@
         /** --- ADJUSTABLE SETTINGS --- **/
         const CONFIG = {
             mainBarsFadePower: 1.6,       
-            foregroundFadePower: 0.8,     // Reduced to keep yellow elements visible longer
+            foregroundFadePower: 0.8,     
             growEndFactor: 0.12,          
             widthMultiplier: 0.98,        
             density: 4,
             maxWaveThickness: 6,
-            particleCount: 100,           // Increased count
-            particleGravity: 0.08         // Reduced gravity for floatier sparks
+            particleCount: 100,           
+            particleGravity: 0.08         
         };
 
         const canvas = document.getElementById('visualizer');
@@ -216,45 +216,16 @@
                 ctx.fillRect(centerX - barWidth/2, yPos, barWidth, CONFIG.density + 1);
             });
 
-            // 2. Yellow Wave (Foreground Layer)
-            ctx.globalAlpha = 1;
-            ctx.shadowBlur = 0; // No glow for the line to keep it sharp
-            ctx.strokeStyle = '#fdff00';
-            ctx.beginPath();
-            let hasDrawn = false;
-            
-            for(let i=0; i < history.length; i+=2) {
-                // If point is silent, skip. 
-                // Using 0.02 threshold so it truly disappears when quiet
-                if (history[i].l < 0.02) continue; 
-                
-                const distFromBottom = i * CONFIG.density;
-                const yPos = canvas.height - distFromBottom;
-                const fgFade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.foregroundFadePower);
-                let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.5) : 1.0;
-                
-                const pointLoudness = history[i].l;
-                // Wider amplitude
-                const amplitude = pointLoudness * (canvas.width * 0.48) * growMod * fgFade;
-                const waveX = centerX + Math.sin(yPos * 0.035 - wavePhase) * amplitude;
-                
-                // Ensure min thickness of 1.5px so it doesn't get blurred out by CSS
-                ctx.lineWidth = Math.max(1.5, pointLoudness * CONFIG.maxWaveThickness * fgFade);
-
-                if(!hasDrawn) { ctx.moveTo(waveX, yPos); hasDrawn = true; } 
-                else { ctx.lineTo(waveX, yPos); }
-            }
-            ctx.stroke();
-
-            // 3. EXPLOSIVE PARTICLES (Top Layer + Glow)
+            // 2. EXPLOSIVE PARTICLES (Middle Layer)
             if (rawLoudness > 0.12 && particles.length < CONFIG.particleCount) {
                 const burstPower = 5 + (rawLoudness * 12);
                 particles.push({
                     x: centerX,
                     y: canvas.height - 10,
-                    vx: (Math.random() - 0.5) * burstPower * 1.5, // Stronger side velocity
+                    vx: (Math.random() - 0.5) * burstPower * 1.5, 
                     vy: -Math.random() * burstPower - 4,
-                    size: Math.random() * 4 + 2, // Larger particles
+                    // UPDATED: Particles 50% smaller (Math.random() * 2 + 1)
+                    size: Math.random() * 2 + 1, 
                     life: 1.0,
                     color: Math.random() > 0.85 ? '#ffffff' : '#fdff00'
                 });
@@ -264,9 +235,8 @@
                 p.x += p.vx; 
                 p.vy += CONFIG.particleGravity; 
                 p.y += p.vy;
-                p.life -= 0.01; // Slower decay
+                p.life -= 0.01;
 
-                // Wider bounds check so they can fly off screen
                 if(p.life <= 0 || p.y > canvas.height + 50 || p.x < -100 || p.x > canvas.width + 100) {
                     particles.splice(index, 1);
                     return;
@@ -276,18 +246,42 @@
                 const pFade = Math.pow(Math.max(0, 1 - (distFromBottom / (canvas.height * 1.2))), CONFIG.foregroundFadePower);
 
                 ctx.fillStyle = p.color;
-                // Boost alpha to make sure they stand out against black
                 ctx.globalAlpha = Math.min(1, p.life * pFade * 2); 
                 
-                // Add Glow Effect
                 ctx.shadowBlur = 12;
                 ctx.shadowColor = p.color;
 
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.shadowBlur = 0; // Reset
+                ctx.shadowBlur = 0; 
             });
+
+            // 3. Yellow Wave (Top Layer - Moved to end)
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = '#fdff00';
+            ctx.beginPath();
+            let hasDrawn = false;
+            
+            for(let i=0; i < history.length; i+=2) {
+                if (history[i].l < 0.02) continue; 
+                
+                const distFromBottom = i * CONFIG.density;
+                const yPos = canvas.height - distFromBottom;
+                const fgFade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.foregroundFadePower);
+                let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.5) : 1.0;
+                
+                const pointLoudness = history[i].l;
+                const amplitude = pointLoudness * (canvas.width * 0.48) * growMod * fgFade;
+                const waveX = centerX + Math.sin(yPos * 0.035 - wavePhase) * amplitude;
+                
+                ctx.lineWidth = Math.max(1.5, pointLoudness * CONFIG.maxWaveThickness * fgFade);
+
+                if(!hasDrawn) { ctx.moveTo(waveX, yPos); hasDrawn = true; } 
+                else { ctx.lineTo(waveX, yPos); }
+            }
+            ctx.stroke();
         }
     </script>
 </body>
