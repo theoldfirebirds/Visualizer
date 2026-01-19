@@ -1,257 +1,294 @@
-import React, { useEffect, useRef, useState } from 'react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Fluid Vox Pro Mobile</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            /* Reduced blur/contrast to keep details visible */
+            filter: blur(4px) contrast(1.5);
+        }
+        .ui-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 10;
+            padding: 16px;
+        }
+        .interactive { pointer-events: auto; }
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #setup-screen {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            background: radial-gradient(circle at center, #111 0%, #050505 100%);
+        }
+        .hidden-node { display: none !important; }
+        .btn-icon { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+    </style>
+</head>
+<body>
 
-const App = () => {
-  const canvasRef = useRef(null);
-  const [isActive, setIsActive] = useState(false);
-  const [sensitivity, setSensitivity] = useState(5.5);
-  const [flowSpeed, setFlowSpeed] = useState(14.0);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  const stateRef = useRef({
-    audioContext: null,
-    analyser: null,
-    dataArray: null,
-    history: [],
-    particles: [],
-    wavePhase: 0,
-    wakeLock: null,
-    animationId: null
-  });
-
-  const CONFIG = {
-    mainBarsFadePower: 1.6,
-    foregroundFadePower: 0.8, // Reduced to let yellow elements stay visible longer/higher
-    growEndFactor: 0.12,
-    widthMultiplier: 0.98,
-    density: 4,
-    maxWaveThickness: 6,
-    particleCount: 100,
-    particleGravity: 0.08
-  };
-
-  useEffect(() => {
-    const handleResize = () => {
-      if (canvasRef.current) {
-        canvasRef.current.width = window.innerWidth;
-        canvasRef.current.height = window.innerHeight;
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    handleResize();
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const handleTouch = (e) => {
-    if (!isActive) return;
-    const x = e.touches[0].clientX;
-    const y = e.touches[0].clientY;
-    const midX = window.innerWidth / 2;
-    const midY = window.innerHeight / 2;
-
-    if (y < midY) {
-      setSensitivity(prev => (x < midX) ? Math.max(0.1, prev - 0.5) : Math.min(15.0, prev + 0.5));
-    } else {
-      setFlowSpeed(prev => (x < midX) ? Math.max(2, prev - 2) : Math.min(60, prev + 2));
-    }
-  };
-
-  const initAudio = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioContext();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      stateRef.current.audioContext = ctx;
-      stateRef.current.analyser = analyser;
-      stateRef.current.dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-      if ('wakeLock' in navigator) {
-        try { stateRef.current.wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
-      }
-
-      setIsActive(true);
-      requestAnimationFrame(render);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const stopAudio = () => {
-    cancelAnimationFrame(stateRef.current.animationId);
-    if (stateRef.current.audioContext) stateRef.current.audioContext.close();
-    if (stateRef.current.wakeLock) stateRef.current.wakeLock.release();
-    if (document.fullscreenElement) document.exitFullscreen();
-    stateRef.current.history = [];
-    stateRef.current.particles = [];
-    setIsActive(false);
-  };
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
-    }
-  };
-
-  const getColor = (weight) => {
-    const r = Math.floor(79 + (217 - 79) * weight);
-    const g = Math.floor(172 * (1 - weight));
-    return `rgb(${r}, ${g}, 254)`;
-  };
-
-  const render = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const state = stateRef.current;
-
-    state.animationId = requestAnimationFrame(render);
-    state.analyser.getByteFrequencyData(state.dataArray);
-
-    let sum = 0;
-    for (let i = 0; i < state.dataArray.length; i++) sum += state.dataArray[i];
-    let rawLoudness = (sum / state.dataArray.length / 255) * sensitivity;
-    const displayedLoudness = Math.min(rawLoudness, 1.5);
-
-    const steps = Math.max(1, Math.floor(flowSpeed / 5));
-    for (let i = 0; i < steps; i++) {
-      state.history.unshift({ l: displayedLoudness });
-    }
-    if (state.history.length > canvas.height / CONFIG.density) state.history.pop();
-
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const centerX = canvas.width / 2;
-    const growLimit = canvas.height * CONFIG.growEndFactor;
-    state.wavePhase += 0.12;
-
-    // 1. Fluid Bars
-    state.history.forEach((item, i) => {
-      if (item.l < 0.01) return;
-      const distFromBottom = i * CONFIG.density;
-      const yPos = canvas.height - distFromBottom;
-      const fade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.mainBarsFadePower);
-      let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.2) : 1.0;
-      const barWidth = (canvas.width * CONFIG.widthMultiplier) * item.l * growMod * fade;
-      ctx.globalAlpha = fade * 0.8;
-      ctx.fillStyle = getColor(item.l);
-      ctx.fillRect(centerX - barWidth / 2, yPos, barWidth, CONFIG.density + 1);
-    });
-
-    // 2. Yellow Wave (Foreground) - High Contrast Pass
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = '#fdff00';
-    ctx.beginPath();
-    let hasDrawn = false;
-    for (let i = 0; i < state.history.length; i += 2) {
-      const pointLoudness = state.history[i].l;
-      if (pointLoudness < 0.02) continue; // Still hide when very silent
-
-      const distFromBottom = i * CONFIG.density;
-      const yPos = canvas.height - distFromBottom;
-      const fgFade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.foregroundFadePower);
-      let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.5) : 1.0;
-
-      // Ensure amplitude is visible even at mid-range sensitivity
-      const amplitude = pointLoudness * (canvas.width * 0.48) * growMod * fgFade;
-      const waveX = centerX + Math.sin(yPos * 0.035 - state.wavePhase) * amplitude;
-      
-      // Ensure line thickness is always at least 1px if sound exists
-      ctx.lineWidth = Math.max(1.5, pointLoudness * CONFIG.maxWaveThickness * fgFade);
-
-      if (!hasDrawn) { ctx.moveTo(waveX, yPos); hasDrawn = true; }
-      else { ctx.lineTo(waveX, yPos); }
-    }
-    ctx.stroke();
-
-    // 3. EXPLOSIVE PARTICLES - Prominent Pass
-    if (rawLoudness > 0.12 && state.particles.length < CONFIG.particleCount) {
-      const burstPower = 5 + (rawLoudness * 12);
-      state.particles.push({
-        x: centerX,
-        y: canvas.height - 10,
-        vx: (Math.random() - 0.5) * burstPower * 1.5, // Increased horizontal spread
-        vy: -Math.random() * burstPower - 4,
-        size: Math.random() * 4 + 2, // Larger particles
-        life: 1.0,
-        color: Math.random() > 0.85 ? '#ffffff' : '#fdff00'
-      });
-    }
-
-    state.particles.forEach((p, index) => {
-      p.x += p.vx;
-      p.vy += CONFIG.particleGravity;
-      p.y += p.vy;
-      p.life -= 0.01;
-
-      if (p.life <= 0 || p.y > canvas.height + 50 || p.x < -100 || p.x > canvas.width + 100) {
-        state.particles.splice(index, 1);
-        return;
-      }
-
-      const distFromBottom = canvas.height - p.y;
-      const pFade = Math.pow(Math.max(0, 1 - (distFromBottom / (canvas.height * 1.2))), CONFIG.foregroundFadePower);
-
-      // Higher visibility in black areas
-      ctx.globalAlpha = Math.min(1, p.life * pFade * 2);
-      ctx.fillStyle = p.color;
-      
-      // Particle Glow
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = p.color;
-      
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-[#050505] text-white overflow-hidden font-sans select-none" onTouchStart={handleTouch}>
-      {!isActive ? (
-        <div className="flex flex-col items-center justify-center h-full">
-          <h1 className="text-3xl font-thin tracking-[0.2em] mb-12 text-cyan-400">FLUID VOX</h1>
-          <button 
-            onClick={initAudio}
-            className="bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-3xl flex flex-col items-center gap-4 active:scale-95 transition-transform"
-          >
-            <div className="p-4 rounded-full bg-cyan-500/10 text-cyan-400">
-              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+    <div id="setup-screen">
+        <h1 class="text-3xl font-thin tracking-[0.2em] mb-12 text-cyan-400">FLUID VOX</h1>
+        <button id="btn-mic" class="glass p-8 rounded-3xl flex flex-col items-center gap-4 active:scale-95 transition-transform">
+            <div class="p-4 rounded-full bg-cyan-500/10 text-cyan-400">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
             </div>
-            <span className="font-bold tracking-widest text-sm">INITIALIZE MIC</span>
-          </button>
-        </div>
-      ) : (
-        <div className="relative h-full w-full">
-          <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-20 pointer-events-none">
-            <div className="text-[10px] space-y-1 opacity-70 uppercase tracking-tighter">
-              <p>Sens: <span className="text-cyan-400">{sensitivity.toFixed(1)}</span>x</p>
-              <p>Speed: <span className="text-fuchsia-400">{flowSpeed.toFixed(1)}</span></p>
-            </div>
-            <div className="flex gap-2 pointer-events-auto">
-              <button onClick={toggleFullscreen} className="bg-white/5 backdrop-blur-md border border-white/10 p-3 rounded-full active:scale-90 transition-all">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-              </button>
-              <button onClick={stopAudio} className="bg-white/5 backdrop-blur-md border border-white/10 p-3 rounded-full active:scale-90 transition-all">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff4444" strokeWidth="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-              </button>
-            </div>
-          </div>
-          <canvas ref={canvasRef} className="absolute inset-0 z-0" style={{ filter: 'blur(4px) contrast(1.5)' }} />
-        </div>
-      )}
+            <span class="font-bold tracking-widest text-sm text-white">INITIALIZE MIC</span>
+        </button>
     </div>
-  );
-};
 
-export default App;
+    <div id="visualizer-ui" class="ui-layer hidden-node">
+        <div class="flex justify-between items-start">
+            <div class="text-[10px] space-y-1 opacity-70 uppercase tracking-tighter">
+                <p>Sens: <span id="sensitivity-val" class="text-cyan-400">5.5</span>x</p>
+                <p>Speed: <span id="speed-val" class="text-fuchsia-400">14.0</span></p>
+            </div>
+            <div class="flex gap-2">
+                <button id="btn-fullscreen" class="interactive glass btn-icon rounded-full active:scale-90 transition-all">
+                    <svg id="icon-fs" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                </button>
+                <button id="btn-stop" class="interactive glass btn-icon rounded-full active:scale-90 transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+            </div>
+        </div>
+        <canvas id="visualizer" class="absolute inset-0 -z-10"></canvas>
+    </div>
+
+    <script>
+        /** --- ADJUSTABLE SETTINGS --- **/
+        const CONFIG = {
+            mainBarsFadePower: 1.6,       
+            foregroundFadePower: 0.8,     // Reduced to keep yellow elements visible longer
+            growEndFactor: 0.12,          
+            widthMultiplier: 0.98,        
+            density: 4,
+            maxWaveThickness: 6,
+            particleCount: 100,           // Increased count
+            particleGravity: 0.08         // Reduced gravity for floatier sparks
+        };
+
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+        const setupScreen = document.getElementById('setup-screen');
+        const vizUI = document.getElementById('visualizer-ui');
+        
+        let audioContext, analyser, sourceNode, dataArray, animationId;
+        
+        let sensitivity = 5.5;
+        let flowSpeed = 14.0; 
+        let wakeLock = null;
+
+        let history = [];
+        let particles = [];
+        let wavePhase = 0;
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+
+        window.addEventListener('touchstart', (e) => {
+            if (vizUI.classList.contains('hidden-node')) return;
+            const x = e.touches[0].clientX;
+            const y = e.touches[0].clientY;
+            const midX = window.innerWidth / 2;
+            const midY = window.innerHeight / 2;
+
+            if (y < midY) {
+                sensitivity = (x < midX) ? Math.max(0.1, sensitivity - 0.5) : Math.min(15.0, sensitivity + 0.5);
+            } else {
+                flowSpeed = (x < midX) ? Math.max(2, flowSpeed - 2) : Math.min(60, flowSpeed + 2);
+            }
+            document.getElementById('sensitivity-val').innerText = sensitivity.toFixed(1);
+            document.getElementById('speed-val').innerText = flowSpeed.toFixed(1);
+        });
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+            } catch (err) {}
+        }
+
+        async function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                sourceNode = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                sourceNode.connect(analyser);
+
+                setupScreen.classList.add('hidden-node');
+                vizUI.classList.remove('hidden-node');
+                resize();
+                render();
+                requestWakeLock(); 
+            } catch (err) { alert("Mic Access Denied"); }
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(e => console.log(e));
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        }
+
+        function stopAudio() {
+            cancelAnimationFrame(animationId);
+            if (audioContext) audioContext.close();
+            if (wakeLock) { wakeLock.release(); wakeLock = null; }
+            if (document.fullscreenElement) document.exitFullscreen();
+            vizUI.classList.add('hidden-node');
+            setupScreen.classList.remove('hidden-node');
+            history = [];
+            particles = [];
+        }
+
+        document.getElementById('btn-mic').addEventListener('click', initAudio);
+        document.getElementById('btn-stop').addEventListener('click', stopAudio);
+        document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
+
+        function getColor(weight) {
+            const r = Math.floor(79 + (217 - 79) * weight);
+            const g = Math.floor(172 * (1 - weight));
+            return `rgb(${r}, ${g}, 254)`;
+        }
+
+        function render() {
+            animationId = requestAnimationFrame(render);
+            analyser.getByteFrequencyData(dataArray);
+            
+            let sum = 0;
+            for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+            let rawLoudness = (sum / dataArray.length / 255) * sensitivity;
+            const displayedLoudness = Math.min(rawLoudness, 1.5);
+
+            const steps = Math.max(1, Math.floor(flowSpeed / 5));
+            for(let i=0; i<steps; i++) {
+                history.unshift({l: displayedLoudness, f: displayedLoudness});
+            }
+            if(history.length > canvas.height / CONFIG.density) history.pop();
+
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const centerX = canvas.width / 2;
+            const growLimit = canvas.height * CONFIG.growEndFactor;
+            wavePhase += 0.12;
+
+            // 1. Fluid Bars (Background Layer)
+            history.forEach((item, i) => {
+                if (item.l < 0.01) return;
+                const distFromBottom = i * CONFIG.density;
+                const yPos = canvas.height - distFromBottom;
+                if (yPos < -10) return;
+                const fade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.mainBarsFadePower);
+                let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.2) : 1.0;
+                const barWidth = (canvas.width * CONFIG.widthMultiplier) * item.l * growMod * fade;
+                
+                ctx.globalAlpha = fade * 0.8;
+                ctx.fillStyle = getColor(item.f);
+                ctx.fillRect(centerX - barWidth/2, yPos, barWidth, CONFIG.density + 1);
+            });
+
+            // 2. Yellow Wave (Foreground Layer)
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0; // No glow for the line to keep it sharp
+            ctx.strokeStyle = '#fdff00';
+            ctx.beginPath();
+            let hasDrawn = false;
+            
+            for(let i=0; i < history.length; i+=2) {
+                // If point is silent, skip. 
+                // Using 0.02 threshold so it truly disappears when quiet
+                if (history[i].l < 0.02) continue; 
+                
+                const distFromBottom = i * CONFIG.density;
+                const yPos = canvas.height - distFromBottom;
+                const fgFade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.foregroundFadePower);
+                let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.5) : 1.0;
+                
+                const pointLoudness = history[i].l;
+                // Wider amplitude
+                const amplitude = pointLoudness * (canvas.width * 0.48) * growMod * fgFade;
+                const waveX = centerX + Math.sin(yPos * 0.035 - wavePhase) * amplitude;
+                
+                // Ensure min thickness of 1.5px so it doesn't get blurred out by CSS
+                ctx.lineWidth = Math.max(1.5, pointLoudness * CONFIG.maxWaveThickness * fgFade);
+
+                if(!hasDrawn) { ctx.moveTo(waveX, yPos); hasDrawn = true; } 
+                else { ctx.lineTo(waveX, yPos); }
+            }
+            ctx.stroke();
+
+            // 3. EXPLOSIVE PARTICLES (Top Layer + Glow)
+            if (rawLoudness > 0.12 && particles.length < CONFIG.particleCount) {
+                const burstPower = 5 + (rawLoudness * 12);
+                particles.push({
+                    x: centerX,
+                    y: canvas.height - 10,
+                    vx: (Math.random() - 0.5) * burstPower * 1.5, // Stronger side velocity
+                    vy: -Math.random() * burstPower - 4,
+                    size: Math.random() * 4 + 2, // Larger particles
+                    life: 1.0,
+                    color: Math.random() > 0.85 ? '#ffffff' : '#fdff00'
+                });
+            }
+
+            particles.forEach((p, index) => {
+                p.x += p.vx; 
+                p.vy += CONFIG.particleGravity; 
+                p.y += p.vy;
+                p.life -= 0.01; // Slower decay
+
+                // Wider bounds check so they can fly off screen
+                if(p.life <= 0 || p.y > canvas.height + 50 || p.x < -100 || p.x > canvas.width + 100) {
+                    particles.splice(index, 1);
+                    return;
+                }
+
+                const distFromBottom = canvas.height - p.y;
+                const pFade = Math.pow(Math.max(0, 1 - (distFromBottom / (canvas.height * 1.2))), CONFIG.foregroundFadePower);
+
+                ctx.fillStyle = p.color;
+                // Boost alpha to make sure they stand out against black
+                ctx.globalAlpha = Math.min(1, p.life * pFade * 2); 
+                
+                // Add Glow Effect
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = p.color;
+
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset
+            });
+        }
+    </script>
+</body>
+</html>
