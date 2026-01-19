@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Fluid Vox Ultra-Wide</title>
+    <title>Fluid Vox Pro Mobile</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -42,7 +42,7 @@
             background: radial-gradient(circle at center, #111 0%, #050505 100%);
         }
         .hidden-node { display: none !important; }
-        .btn-icon { width: 44px; height: 44px; display: flex; items-center; justify-content: center; }
+        .btn-icon { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
     </style>
 </head>
 <body>
@@ -60,15 +60,13 @@
     <div id="visualizer-ui" class="ui-layer hidden-node">
         <div class="flex justify-between items-start">
             <div class="text-[10px] space-y-1 opacity-70 uppercase tracking-tighter">
-                <p>Sens: <span id="sensitivity-val" class="text-cyan-400">1.8</span>x</p>
-                <p>Speed: <span id="speed-val" class="text-fuchsia-400">15.0</span></p>
+                <p>Sens: <span id="sensitivity-val" class="text-cyan-400">5.5</span>x</p>
+                <p>Speed: <span id="speed-val" class="text-fuchsia-400">14.0</span></p>
             </div>
             <div class="flex gap-2">
-                <!-- Fullscreen Button -->
                 <button id="btn-fullscreen" class="interactive glass btn-icon rounded-full active:scale-90 transition-all">
                     <svg id="icon-fs" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                 </button>
-                <!-- Stop Button -->
                 <button id="btn-stop" class="interactive glass btn-icon rounded-full active:scale-90 transition-all">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 </button>
@@ -80,11 +78,14 @@
     <script>
         /** --- ADJUSTABLE SETTINGS --- **/
         const CONFIG = {
-            mainBarsFadePower: 1.6,       // Higher = fades faster as it goes up
-            foregroundFadePower: 1.1,     // Yellow wave/particle fade
-            growEndFactor: 0.12,          // % of screen height where waves reach full width
-            widthMultiplier: 0.98,        // 0.98 = 98% of screen width coverage
-            density: 4                    // Spacing between samples (4 is smooth for mobile)
+            mainBarsFadePower: 1.6,       
+            foregroundFadePower: 1.1,     
+            growEndFactor: 0.12,          
+            widthMultiplier: 0.98,        
+            density: 4,
+            maxWaveThickness: 5,
+            particleCount: 80,            // Increased particle limit
+            particleGravity: 0.15         // Gravity pulls particles down slightly as they fly
         };
 
         const canvas = document.getElementById('visualizer');
@@ -93,8 +94,9 @@
         const vizUI = document.getElementById('visualizer-ui');
         
         let audioContext, analyser, sourceNode, dataArray, animationId;
-        let sensitivity = 1.8;
-        let flowSpeed = 15.0; 
+        
+        let sensitivity = 5.5;
+        let flowSpeed = 14.0; 
         let wakeLock = null;
 
         let history = [];
@@ -107,7 +109,6 @@
         }
         window.addEventListener('resize', resize);
 
-        // Quadrant Controls
         window.addEventListener('touchstart', (e) => {
             if (vizUI.classList.contains('hidden-node')) return;
             const x = e.touches[0].clientX;
@@ -116,7 +117,7 @@
             const midY = window.innerHeight / 2;
 
             if (y < midY) {
-                sensitivity = (x < midX) ? Math.max(0.1, sensitivity - 0.2) : Math.min(6.0, sensitivity + 0.2);
+                sensitivity = (x < midX) ? Math.max(0.1, sensitivity - 0.5) : Math.min(15.0, sensitivity + 0.5);
             } else {
                 flowSpeed = (x < midX) ? Math.max(2, flowSpeed - 2) : Math.min(60, flowSpeed + 2);
             }
@@ -124,15 +125,10 @@
             document.getElementById('speed-val').innerText = flowSpeed.toFixed(1);
         });
 
-        // Wake Lock Function (Prevents phone from sleeping)
         async function requestWakeLock() {
             try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                }
-            } catch (err) {
-                console.log("Wake Lock failed:", err.message);
-            }
+                if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+            } catch (err) {}
         }
 
         async function initAudio() {
@@ -149,7 +145,7 @@
                 vizUI.classList.remove('hidden-node');
                 resize();
                 render();
-                requestWakeLock(); // Activate anti-sleep
+                requestWakeLock(); 
             } catch (err) { alert("Mic Access Denied"); }
         }
 
@@ -189,10 +185,11 @@
             let sum = 0;
             for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
             let rawLoudness = (sum / dataArray.length / 255) * sensitivity;
-            
+            const displayedLoudness = Math.min(rawLoudness, 1.2);
+
             const steps = Math.max(1, Math.floor(flowSpeed / 5));
             for(let i=0; i<steps; i++) {
-                history.unshift({l: rawLoudness, f: rawLoudness});
+                history.unshift({l: displayedLoudness, f: displayedLoudness});
             }
             if(history.length > canvas.height / CONFIG.density) history.pop();
 
@@ -205,67 +202,84 @@
 
             // 1. Fluid Bars
             history.forEach((item, i) => {
+                if (item.l < 0.01) return;
                 const distFromBottom = i * CONFIG.density;
                 const yPos = canvas.height - distFromBottom;
                 if (yPos < -10) return;
-
                 const fade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.mainBarsFadePower);
-                
-                let growMod = 1.0;
-                if (distFromBottom < growLimit) {
-                    growMod = Math.pow(distFromBottom / growLimit, 1.5);
-                }
-
-                // WIDE WIDTH: CONFIG.widthMultiplier controls coverage
+                let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.5) : 1.0;
                 const barWidth = (canvas.width * CONFIG.widthMultiplier) * item.l * growMod * fade;
-                
                 ctx.globalAlpha = fade;
                 ctx.fillStyle = getColor(item.f);
                 ctx.fillRect(centerX - barWidth/2, yPos, barWidth, CONFIG.density + 1);
             });
 
-            // 2. Yellow Wave (Foreground)
+            // 2. Yellow Wave
             ctx.globalAlpha = 1;
             ctx.strokeStyle = '#fdff00';
-            ctx.lineWidth = 4;
             ctx.beginPath();
+            let hasDrawn = false;
             for(let i=0; i < history.length; i+=2) {
+                if (history[i].l < 0.005) continue; 
                 const distFromBottom = i * CONFIG.density;
                 const yPos = canvas.height - distFromBottom;
                 const fgFade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.foregroundFadePower);
-                
-                let growMod = 1.0;
-                if (distFromBottom < growLimit) growMod = Math.pow(distFromBottom / growLimit, 2);
-                
-                // Slightly wider sin wave movement for mobile
-                const waveX = centerX + Math.sin(yPos * 0.035 - wavePhase) * (history[i].l * (canvas.width * 0.4) * growMod * fgFade);
-                if(i === 0) ctx.moveTo(waveX, yPos);
-                else ctx.lineTo(waveX, yPos);
+                let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 2) : 1.0;
+                const pointLoudness = history[i].l;
+                const amplitude = pointLoudness * (canvas.width * 0.45) * growMod * fgFade;
+                const waveX = centerX + Math.sin(yPos * 0.035 - wavePhase) * amplitude;
+                ctx.lineWidth = Math.max(0.1, pointLoudness * CONFIG.maxWaveThickness * fgFade);
+                if(!hasDrawn) { ctx.moveTo(waveX, yPos); hasDrawn = true; } 
+                else { ctx.lineTo(waveX, yPos); }
             }
             ctx.stroke();
 
-            // 3. Particles
-            if (rawLoudness > 0.22 && particles.length < 50) {
+            // 3. EXPLOSIVE PARTICLES
+            // Burst particles during loudness peaks
+            if (rawLoudness > 0.15 && particles.length < CONFIG.particleCount) {
+                const burstPower = rawLoudness * 12;
                 particles.push({
-                    x: centerX + (Math.random() - 0.5) * 40,
-                    y: canvas.height - 5,
-                    vx: (Math.random() - 0.5) * 8,
-                    vy: -Math.random() * 6 - 3,
-                    life: 1.0
+                    x: centerX,
+                    y: canvas.height - 10,
+                    vx: (Math.random() - 0.5) * burstPower, // Wide lateral spray
+                    vy: -Math.random() * burstPower - 2,     // Initial upward kick
+                    size: Math.random() * 3 + 1,
+                    life: 1.0,
+                    color: Math.random() > 0.8 ? '#ffffff' : '#fdff00' // Occasional white spark
                 });
             }
 
             particles.forEach((p, index) => {
-                p.x += p.vx; p.y += p.vy;
-                const d = canvas.height - p.y;
-                const pFade = Math.pow(Math.max(0, 1 - (d / canvas.height)), CONFIG.foregroundFadePower);
-                p.life -= 0.015;
-                if(p.life <= 0 || p.y < 0) { particles.splice(index, 1); return; }
-                ctx.fillStyle = '#fdff00';
+                // Physics: Velocity + Gravity
+                p.x += p.vx; 
+                p.vy += CONFIG.particleGravity; 
+                p.y += p.vy;
+                
+                // Fade logic
+                const distFromBottom = canvas.height - p.y;
+                const pFade = Math.pow(Math.max(0, 1 - (distFromBottom / canvas.height)), CONFIG.foregroundFadePower);
+                p.life -= 0.012;
+
+                if(p.life <= 0 || p.y > canvas.height + 50 || p.x < -20 || p.x > canvas.width + 20) {
+                    particles.splice(index, 1);
+                    return;
+                }
+
+                ctx.fillStyle = p.color;
                 ctx.globalAlpha = p.life * pFade;
+                
+                // Add a small glow effect for prominent sparks
+                if (p.life > 0.5) {
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = p.color;
+                } else {
+                    ctx.shadowBlur = 0;
+                }
+
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.shadowBlur = 0; // Reset shadow for other draws
             });
         }
     </script>
