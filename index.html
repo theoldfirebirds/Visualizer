@@ -16,7 +16,7 @@
         }
         canvas {
             display: block;
-            /* Reduced blur/contrast to keep details visible */
+            /* Keeps details visible while maintaining liquid feel */
             filter: blur(4px) contrast(1.5);
         }
         .ui-layer {
@@ -94,7 +94,8 @@
         const setupScreen = document.getElementById('setup-screen');
         const vizUI = document.getElementById('visualizer-ui');
         
-        let audioContext, analyser, sourceNode, dataArray, animationId;
+        // Added mediaStream to track the microphone stream
+        let audioContext, analyser, sourceNode, dataArray, animationId, mediaStream;
         
         let sensitivity = 5.5;
         let flowSpeed = 14.0; 
@@ -135,8 +136,11 @@
         async function initAudio() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                sourceNode = audioContext.createMediaStreamSource(stream);
+                
+                // Assign to global variable so we can stop it later
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                sourceNode = audioContext.createMediaStreamSource(mediaStream);
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
                 dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -160,9 +164,21 @@
 
         function stopAudio() {
             cancelAnimationFrame(animationId);
-            if (audioContext) audioContext.close();
+            
+            // CRITICAL FIX: Stop all tracks in the media stream to release the mic
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+
             if (wakeLock) { wakeLock.release(); wakeLock = null; }
             if (document.fullscreenElement) document.exitFullscreen();
+            
             vizUI.classList.add('hidden-node');
             setupScreen.classList.remove('hidden-node');
             history = [];
@@ -224,7 +240,6 @@
                     y: canvas.height - 10,
                     vx: (Math.random() - 0.5) * burstPower * 1.5, 
                     vy: -Math.random() * burstPower - 4,
-                    // UPDATED: Particles 50% smaller (Math.random() * 2 + 1)
                     size: Math.random() * 2 + 1, 
                     life: 1.0,
                     color: Math.random() > 0.85 ? '#ffffff' : '#fdff00'
@@ -257,7 +272,7 @@
                 ctx.shadowBlur = 0; 
             });
 
-            // 3. Yellow Wave (Top Layer - Moved to end)
+            // 3. Yellow Wave (Top Layer - Maximized Width)
             ctx.globalAlpha = 1;
             ctx.shadowBlur = 0;
             ctx.strokeStyle = '#fdff00';
@@ -273,10 +288,14 @@
                 let growMod = (distFromBottom < growLimit) ? Math.pow(distFromBottom / growLimit, 1.5) : 1.0;
                 
                 const pointLoudness = history[i].l;
-                const amplitude = pointLoudness * (canvas.width * 0.48) * growMod * fgFade;
+                
+                // UPDATED: Amplitude Increased from 0.48 to 0.8 to swing WIDER than the bars
+                const amplitude = pointLoudness * (canvas.width * 0.8) * growMod * fgFade;
+                
                 const waveX = centerX + Math.sin(yPos * 0.035 - wavePhase) * amplitude;
                 
-                ctx.lineWidth = Math.max(1.5, pointLoudness * CONFIG.maxWaveThickness * fgFade);
+                // Increased min thickness slightly to 2.0 to stay visible against black
+                ctx.lineWidth = Math.max(2.0, pointLoudness * CONFIG.maxWaveThickness * fgFade);
 
                 if(!hasDrawn) { ctx.moveTo(waveX, yPos); hasDrawn = true; } 
                 else { ctx.lineTo(waveX, yPos); }
